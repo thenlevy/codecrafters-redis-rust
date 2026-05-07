@@ -194,7 +194,6 @@ impl<R: AsyncRead + Unpin> RespParser<R> {
 
     /// Reads a line up to and excluding `\r\n`, advances past `\r\n`.
     async fn read_line_bytes(&mut self) -> Result<Vec<u8>, RespError> {
-        eprintln!("read_line_bytes");
         loop {
             if let Some(rel) = find_crlf(self.remaining()) {
                 let line = self.remaining()[..rel].to_vec();
@@ -369,7 +368,6 @@ impl<R: AsyncRead + Unpin> RespParser<R> {
     }
 
     async fn parse_array(&mut self) -> Result<Vec<RespValue>, RespError> {
-        eprintln!("parse_array");
         let count = self.parse_int_line().await?;
         if count < 0 {
             return if count == -1 {

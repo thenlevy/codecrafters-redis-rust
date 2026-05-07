@@ -46,11 +46,7 @@ async fn handle_connection(stream: TcpStream, address: SocketAddr) -> Result<(),
             }
             Command::EchoOwned(args) => {
                 output
-                    .write_all(&Vec::from(RespValue::Array(
-                        args.into_iter()
-                            .map(|arg| RespValue::BulkString(arg.clone()))
-                            .collect(),
-                    )))
+                    .write_all(&Vec::from(RespValue::BulkString(args.join(" "))))
                     .await?;
             }
             Command::Unknown(cmd) => {
