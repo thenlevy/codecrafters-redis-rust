@@ -1,7 +1,11 @@
+mod resp;
+
+use resp::{Command, CommandError, RespParser};
+
 use {
-    std::{io, net::SocketAddr},
+    std::net::SocketAddr,
     tokio::{
-        io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
+        io::AsyncWriteExt,
         net::{TcpListener, TcpStream},
     },
 };
@@ -26,54 +30,34 @@ async fn main() {
     }
 }
 
-async fn handle_connection(stream: TcpStream, address: SocketAddr) -> Result<(), io::Error> {
+async fn handle_connection(stream: TcpStream, address: SocketAddr) -> Result<(), CommandError> {
     let (input, mut output) = stream.into_split();
-    let mut lines = BufReader::new(input).lines();
+    let mut rest_parser = RespParser::new(input);
 
-    while let Some(cmd) = lines.next_line().await? {
-        match Command::from_line(cmd.as_str()) {
+    while let Some(raw_command) = rest_parser.next_raw_command().await? {
+        match Command::from(&raw_command) {
             Command::Ping => {
                 output.write_all(b"+PONG\r\n").await?;
             }
-            Command::Echo(args) => {
-                output.write_all(args.as_bytes()).await?;
+            Command::Echo(arg) => {
+                output.write_all(arg.as_bytes()).await?;
             }
-            Command::Empty => {
-                println!("empty command from address {address}");
+            Command::EchoOwned(args) => {
+                for (n, arg) in args.iter().enumerate() {
+                    if n > 0 {
+                        output.write_all(b" ").await?;
+                    }
+                    output.write_all(arg.as_bytes()).await?;
+                }
             }
             Command::Unknown(cmd) => {
                 println!("unexpected command from address {address}: {cmd}");
+            }
+            Command::Empty => {
+                println!("empty command from address {address}")
             }
         }
     }
 
     Ok(())
-}
-
-impl<'l> Command<'l> {
-    fn from_line(line: &'l str) -> Self {
-        let mut words = line.trim().split_whitespace();
-
-        let Some(verb) = words.next() else {
-            return Command::Empty;
-        };
-
-        match verb {
-            "PING" => Command::Ping,
-            "ECHO" => {
-                let Some((_echo, arg)) = line.trim().split_once(' ') else {
-                    return Command::Echo("");
-                };
-                Command::Echo(arg)
-            }
-            _ => Command::Unknown(line),
-        }
-    }
-}
-
-enum Command<'l> {
-    Ping,
-    Echo(&'l str),
-    Unknown(&'l str),
-    Empty,
 }
