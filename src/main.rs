@@ -31,15 +31,49 @@ async fn handle_connection(stream: TcpStream, address: SocketAddr) -> Result<(),
     let mut lines = BufReader::new(input).lines();
 
     while let Some(cmd) = lines.next_line().await? {
-        match cmd.as_str() {
-            "PING" => {
+        match Command::from_line(cmd.as_str()) {
+            Command::Ping => {
                 output.write_all(b"+PONG\r\n").await?;
             }
-            cmd => {
+            Command::Echo(args) => {
+                output.write_all(args.as_bytes()).await?;
+            }
+            Command::Empty => {
+                println!("empty command from address {address}");
+            }
+            Command::Unknown(cmd) => {
                 println!("unexpected command from address {address}: {cmd}");
             }
         }
     }
 
     Ok(())
+}
+
+impl<'l> Command<'l> {
+    fn from_line(line: &'l str) -> Self {
+        let mut words = line.trim().split_whitespace();
+
+        let Some(verb) = words.next() else {
+            return Command::Empty;
+        };
+
+        match verb {
+            "PING" => Command::Ping,
+            "ECHO" => {
+                let Some((_echo, arg)) = line.trim().split_once(' ') else {
+                    return Command::Echo("");
+                };
+                Command::Echo(arg)
+            }
+            _ => Command::Unknown(line),
+        }
+    }
+}
+
+enum Command<'l> {
+    Ping,
+    Echo(&'l str),
+    Unknown(&'l str),
+    Empty,
 }
