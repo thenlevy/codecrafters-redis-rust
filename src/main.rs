@@ -1,6 +1,6 @@
 mod resp;
 
-use resp::{Command, CommandError, RespParser};
+use resp::{Command, CommandError, RespParser, RespValue};
 
 use {
     std::net::SocketAddr,
@@ -40,15 +40,18 @@ async fn handle_connection(stream: TcpStream, address: SocketAddr) -> Result<(),
                 output.write_all(b"+PONG\r\n").await?;
             }
             Command::Echo(arg) => {
-                output.write_all(arg.as_bytes()).await?;
+                output
+                    .write_all(format!("${}\r\n{arg}\r\n", arg.len()).as_bytes())
+                    .await?;
             }
             Command::EchoOwned(args) => {
-                for (n, arg) in args.iter().enumerate() {
-                    if n > 0 {
-                        output.write_all(b" ").await?;
-                    }
-                    output.write_all(arg.as_bytes()).await?;
-                }
+                output
+                    .write_all(&Vec::from(RespValue::Array(
+                        args.into_iter()
+                            .map(|arg| RespValue::BulkString(arg.clone()))
+                            .collect(),
+                    )))
+                    .await?;
             }
             Command::Unknown(cmd) => {
                 println!("unexpected command from address {address}: {cmd}");

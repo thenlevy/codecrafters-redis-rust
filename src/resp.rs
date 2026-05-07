@@ -14,6 +14,58 @@ pub struct RespParser<R> {
     consume: usize,
     eof: bool,
 }
+/// Parsed RESP value; only bulk strings and arrays are supported (owned payloads).
+#[derive(Debug, PartialEq, Eq)]
+pub enum RespValue {
+    BulkString(String),
+    Array(Vec<RespValue>),
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum RespError {
+    #[error("unexpected end of input")]
+    Incomplete,
+    #[error("expected CRLF")]
+    ExpectedCrlf,
+    #[error("invalid UTF-8 in integer line")]
+    InvalidIntUtf8,
+    #[error("invalid UTF-8 in bulk string")]
+    InvalidUtf8,
+    #[error("invalid integer: {0}")]
+    InvalidInt(#[from] std::num::ParseIntError),
+    #[error("unknown type prefix {0:?} (expected '$' or '*')")]
+    UnknownType(u8),
+    #[error("negative array length {0}")]
+    NegativeArrayLength(isize),
+    #[error("I/O error: {0}")]
+    Io(#[from] std::io::Error),
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum CommandError {
+    #[error("invalid bulk string")]
+    InvalidBulkString,
+    #[error("RESP error: {0}")]
+    Resp(#[from] RespError),
+    #[error("I/O error: {0}")]
+    Io(#[from] std::io::Error),
+}
+
+impl From<RespValue> for Vec<u8> {
+    fn from(value: RespValue) -> Self {
+        match value {
+            RespValue::BulkString(s) => format!("${}\r\n{s}\r\n", s.len()).into_bytes(),
+            RespValue::Array(values) => {
+                let mut ret = vec![];
+                ret.extend_from_slice(format!("*{}\r\n", values.len()).as_bytes());
+                for value in values {
+                    ret.extend(Vec::from(value));
+                }
+                ret
+            }
+        }
+    }
+}
 
 pub enum RawCommand {
     Inlined(String),
@@ -332,43 +384,6 @@ impl<R: AsyncRead + Unpin> RespParser<R> {
         }
         Ok(elements)
     }
-}
-
-/// Parsed RESP value; only bulk strings and arrays are supported (owned payloads).
-#[derive(Debug, PartialEq, Eq)]
-pub enum RespValue {
-    BulkString(String),
-    Array(Vec<RespValue>),
-}
-
-#[derive(Debug, thiserror::Error)]
-pub enum RespError {
-    #[error("unexpected end of input")]
-    Incomplete,
-    #[error("expected CRLF")]
-    ExpectedCrlf,
-    #[error("invalid UTF-8 in integer line")]
-    InvalidIntUtf8,
-    #[error("invalid UTF-8 in bulk string")]
-    InvalidUtf8,
-    #[error("invalid integer: {0}")]
-    InvalidInt(#[from] std::num::ParseIntError),
-    #[error("unknown type prefix {0:?} (expected '$' or '*')")]
-    UnknownType(u8),
-    #[error("negative array length {0}")]
-    NegativeArrayLength(isize),
-    #[error("I/O error: {0}")]
-    Io(#[from] std::io::Error),
-}
-
-#[derive(Debug, thiserror::Error)]
-pub enum CommandError {
-    #[error("invalid bulk string")]
-    InvalidBulkString,
-    #[error("RESP error: {0}")]
-    Resp(#[from] RespError),
-    #[error("I/O error: {0}")]
-    Io(#[from] std::io::Error),
 }
 
 fn find_crlf(data: &[u8]) -> Option<usize> {
