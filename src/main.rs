@@ -10,11 +10,7 @@ use {
         net::SocketAddr,
         sync::{Arc, LazyLock, Mutex},
     },
-    thiserror::Error,
-    tokio::{
-        io::AsyncWriteExt,
-        net::{TcpListener, TcpStream},
-    },
+    tokio::net::{TcpListener, TcpStream},
     tokio_util::codec::Decoder,
 };
 
@@ -43,7 +39,7 @@ async fn main() {
     }
 }
 
-async fn handle_connection(stream: TcpStream, address: SocketAddr) -> Result<(), CommandError> {
+async fn handle_connection(stream: TcpStream, _address: SocketAddr) -> Result<(), CommandError> {
     let mut transport = RespParser::default().framed(stream);
 
     while let Some(raw_command) = transport.next().await {
@@ -100,8 +96,6 @@ enum Command {
 
 #[derive(Debug, thiserror::Error)]
 enum CommandError {
-    #[error("internal error: {0}")]
-    InternalError(&'static str),
     #[error("invalid command: {0}")]
     InvalidCommand(&'static str),
     #[error("invalid argument: {0}")]
