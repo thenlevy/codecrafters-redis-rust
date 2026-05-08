@@ -1,6 +1,7 @@
 mod resp;
+mod storage;
 
-use resp::RespParser;
+use {resp::RespParser, storage::SetOperation};
 
 use {
     bytes::Bytes,
@@ -14,14 +15,9 @@ use {
     tokio_util::codec::Decoder,
 };
 
-static STORAGE: LazyLock<Arc<Mutex<HashMap<Bytes, Bytes>>>> =
-    LazyLock::new(|| Arc::new(Mutex::new(HashMap::new())));
-
 #[tokio::main]
 async fn main() {
     let socket_address = "127.0.0.1:6379";
-
-    LazyLock::force(&STORAGE);
 
     let listener = TcpListener::bind(socket_address)
         .await
@@ -62,15 +58,12 @@ async fn handle_connection(stream: TcpStream, _address: SocketAddr) -> Result<()
             Ok(command) => match command {
                 Command::Ping => Some(RedisValue::SimpleString(Bytes::from("PONG"))),
                 Command::Echo(arg) => Some(RedisValue::BulkString(arg)),
-                Command::Set(key, value) => {
-                    STORAGE.lock().unwrap().insert(key, value);
+                Command::Set(operation) => {
+                    storage::set(operation);
                     Some(RedisValue::SimpleString(Bytes::from("OK")))
                 }
-                Command::Get(key) => STORAGE
-                    .lock()
-                    .unwrap()
-                    .get(&key)
-                    .map(|value| RedisValue::BulkString(Bytes::clone(value)))
+                Command::Get(key) => storage::get(key)
+                    .map(RedisValue::BulkString)
                     .or(Some(RedisValue::Null)),
                 Command::NoOp => None,
             },
@@ -89,7 +82,7 @@ async fn handle_connection(stream: TcpStream, _address: SocketAddr) -> Result<()
 enum Command {
     Ping,
     Echo(Bytes),
-    Set(Bytes, Bytes),
+    Set(SetOperation),
     Get(Bytes),
     NoOp,
 }
@@ -139,15 +132,8 @@ impl TryFrom<&[RedisValue]> for Command {
                 Ok(Command::Echo(arg_bytes))
             }
             "SET" => {
-                if value.len() != 3 {
-                    return Err(CommandError::InvalidArgument(
-                        "SET command requires two arguments",
-                    ));
-                }
-                Ok(Command::Set(
-                    value[1].try_bytes().unwrap(),
-                    value[2].try_bytes().unwrap(),
-                ))
+                let operation = SetOperation::try_from_args(value)?;
+                Ok(Command::Set(operation))
             }
             "GET" => {
                 if value.len() != 2 {
