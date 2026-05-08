@@ -6,11 +6,7 @@ use {resp::RespParser, storage::SetOperation};
 use {
     bytes::Bytes,
     futures::{SinkExt, StreamExt},
-    std::{
-        collections::HashMap,
-        net::SocketAddr,
-        sync::{Arc, LazyLock, Mutex},
-    },
+    std::net::SocketAddr,
     tokio::net::{TcpListener, TcpStream},
     tokio_util::codec::Decoder,
 };
@@ -132,7 +128,7 @@ impl TryFrom<&[RedisValue]> for Command {
                 Ok(Command::Echo(arg_bytes))
             }
             "SET" => {
-                let operation = SetOperation::try_from_args(value)?;
+                let operation = SetOperation::try_from_args(&value[1..])?;
                 Ok(Command::Set(operation))
             }
             "GET" => {
