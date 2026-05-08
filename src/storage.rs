@@ -1,4 +1,4 @@
-use super::{CommandError, RedisValue};
+use super::CommandError;
 
 use {
     bytes::Bytes,
@@ -21,6 +21,12 @@ pub struct SetOperation {
 pub struct PushOperation {
     key: Bytes,
     values: Vec<Bytes>,
+}
+
+pub struct RangeOperation {
+    key: Bytes,
+    start: isize,
+    end: isize,
 }
 
 pub fn set(operation: SetOperation) {
@@ -56,6 +62,43 @@ pub fn get(key: Bytes) -> Option<Bytes> {
     }
 }
 
+/// Redis-style inclusive range on a list with length `len`. Returns `(start_idx, stop_idx)`
+/// inclusive, or [`None`] when the logical range is empty.
+fn list_range_bounds(start: isize, end: isize, len: usize) -> Option<(usize, usize)> {
+    if len == 0 {
+        return None;
+    }
+    let l = len as isize;
+
+    let mut s = start;
+    if s < 0 {
+        s += l;
+        if s < 0 {
+            s = 0;
+        }
+    }
+    if s >= l {
+        return None;
+    }
+
+    let mut e = end;
+    if e < 0 {
+        e += l;
+        if e < 0 {
+            return None;
+        }
+    }
+    if e >= l {
+        e = l - 1;
+    }
+
+    if s > e {
+        None
+    } else {
+        Some((s as usize, e as usize))
+    }
+}
+
 pub fn push(operation: PushOperation) -> usize {
     let mut lock = STORAGE.lock().unwrap();
     let entry = lock.entry(operation.key).or_insert_with(|| StoredValue {
@@ -75,35 +118,19 @@ pub fn push(operation: PushOperation) -> usize {
 }
 
 impl SetOperation {
-    pub fn try_from_args(args: &[RedisValue]) -> Result<Self, CommandError> {
+    pub fn try_from_args(args: &[Bytes]) -> Result<Self, CommandError> {
         if args.len() < 2 {
             return Err(CommandError::InvalidArgument(
                 "SET command requires at least two arguments",
             ));
         }
 
-        let RedisValue::BulkString(key) = &args[0] else {
-            return Err(CommandError::InvalidArgument(
-                "SET command requires a string argument",
-            ));
-        };
-        let key = key.clone();
-
-        let RedisValue::BulkString(value) = &args[1] else {
-            return Err(CommandError::InvalidArgument(
-                "SET command requires a string argument",
-            ));
-        };
-        let value = value.clone();
+        let key = args[0].clone();
+        let value = args[1].clone();
 
         let expiration_ms = (args.len() >= 3)
             .then(|| -> Result<i64, CommandError> {
-                let RedisValue::BulkString(opt) = &args[2] else {
-                    return Err(CommandError::InvalidArgument(
-                        "SET command requires a string argument",
-                    ));
-                };
-                let mult = match opt.as_ref() {
+                let mult = match args[2].as_ref() {
                     b"EX" => 1000,
                     b"PX" => 1,
                     _ => {
@@ -113,14 +140,9 @@ impl SetOperation {
                     }
                 };
 
-                let RedisValue::BulkString(exp) = args.get(3).ok_or(
-                    CommandError::InvalidArgument("Missing value after expiration type"),
-                )?
-                else {
-                    return Err(CommandError::InvalidArgument(
-                        "SET command requires a string argument",
-                    ));
-                };
+                let exp = args.get(3).ok_or(CommandError::InvalidArgument(
+                    "Missing value after expiration type",
+                ))?;
 
                 str::from_utf8(exp.as_ref())
                     .map_err(|_| CommandError::InvalidArgument("Invalid expiration value"))?
@@ -139,33 +161,74 @@ impl SetOperation {
 }
 
 impl PushOperation {
-    pub fn try_from_args(args: &[RedisValue]) -> Result<Self, CommandError> {
+    pub fn try_from_args(args: &[Bytes]) -> Result<Self, CommandError> {
         if args.len() < 2 {
             return Err(CommandError::InvalidArgument(
-                "PUSH command requires at least two arguments",
+                "RPUSH command requires at least two arguments",
             ));
         }
 
-        let RedisValue::BulkString(key) = &args[0] else {
+        let key = args[0].clone();
+        let values = args[1..].to_vec();
+
+        Ok(Self { key, values })
+    }
+}
+
+impl RangeOperation {
+    pub fn try_from_args(args: &[Bytes]) -> Result<Self, CommandError> {
+        if args.len() != 3 {
             return Err(CommandError::InvalidArgument(
-                "PUSH command requires a string key",
+                "LRANGE command requires key, start, and stop",
             ));
-        };
-
-        let mut values = Vec::with_capacity(args.len() - 1);
-        for arg in &args[1..] {
-            let RedisValue::BulkString(v) = arg else {
-                return Err(CommandError::InvalidArgument(
-                    "PUSH command requires string arguments",
-                ));
-            };
-            values.push(v.clone());
         }
 
-        Ok(Self {
-            key: key.clone(),
-            values,
-        })
+        let key = args[0].clone();
+
+        let start = str::from_utf8(args[1].as_ref())
+            .map_err(|_| {
+                CommandError::InvalidArgument("LRANGE start must be a valid UTF-8 integer")
+            })?
+            .parse::<isize>()
+            .map_err(|_| CommandError::InvalidArgument("LRANGE start must be an integer"))?;
+
+        let end = str::from_utf8(args[2].as_ref())
+            .map_err(|_| {
+                CommandError::InvalidArgument("LRANGE stop must be a valid UTF-8 integer")
+            })?
+            .parse::<isize>()
+            .map_err(|_| CommandError::InvalidArgument("LRANGE stop must be an integer"))?;
+
+        Ok(Self { key, start, end })
+    }
+}
+
+pub fn get_range(operation: RangeOperation) -> Result<Vec<Bytes>, CommandError> {
+    let RangeOperation { key, start, end } = operation;
+
+    let mut lock = STORAGE.lock().unwrap();
+    match lock.get(&key) {
+        None => Ok(vec![]),
+        Some(stored_value) => {
+            if stored_value.expires_at.is_some_and(|d| d < Utc::now()) {
+                lock.remove(&key);
+                Ok(vec![])
+            } else {
+                let list_slice = match &stored_value.value {
+                    Value::List(values) => {
+                        let bounds = list_range_bounds(start, end, values.len());
+                        let out = bounds
+                            .map(|(s, e)| values[s..=e].to_vec())
+                            .unwrap_or_default();
+                        Ok(out)
+                    }
+                    Value::Single(_) => Err(CommandError::InvalidArgument("value is not a list")),
+                };
+
+                drop(lock);
+                list_slice
+            }
+        }
     }
 }
 struct StoredValue {

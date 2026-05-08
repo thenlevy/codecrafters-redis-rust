@@ -3,7 +3,7 @@ mod storage;
 
 use {
     resp::RespParser,
-    storage::{PushOperation, SetOperation},
+    storage::{PushOperation, RangeOperation, SetOperation},
 };
 
 use {
@@ -65,6 +65,15 @@ async fn handle_connection(stream: TcpStream, _address: SocketAddr) -> Result<()
                     Command::Get(key) => storage::get(key)
                         .map(RedisValue::BulkString)
                         .or(Some(RedisValue::Null)),
+                    Command::Lrange(operation) => match storage::get_range(operation) {
+                        Ok(elements) => Some(RedisValue::Array(
+                            elements
+                                .into_iter()
+                                .map(RedisValue::BulkString)
+                                .collect(),
+                        )),
+                        Err(e) => Some(RedisValue::Error(e.to_string())),
+                    },
                     Command::NoOp => None,
                 },
             },
@@ -86,6 +95,7 @@ enum Command {
     Set(SetOperation),
     Push(PushOperation),
     Get(Bytes),
+    Lrange(RangeOperation),
     NoOp,
 }
 
@@ -99,17 +109,17 @@ enum CommandError {
     IoError(#[from] std::io::Error),
 }
 
-/// Turn a decoded top-level RESP value into bulk-string command arguments:
-/// RESP arrays coerce `SimpleString` to `BulkString`; inline commands are tokenized by ASCII
+/// Turn a decoded top-level RESP value into command argument bytes (one entry per bulk string /
+/// inline token): RESP arrays coerce string elements to bytes; inline commands are tokenized by ASCII
 /// whitespace.
-fn normalize_command_args(value: &RedisValue) -> Result<Vec<RedisValue>, CommandError> {
+fn normalize_command_args(value: &RedisValue) -> Result<Vec<Bytes>, CommandError> {
     match value {
         RedisValue::Array(items) => {
             let mut out = Vec::with_capacity(items.len());
             for item in items {
                 match item {
-                    RedisValue::BulkString(b) => out.push(RedisValue::BulkString(b.clone())),
-                    RedisValue::SimpleString(s) => out.push(RedisValue::BulkString(s.clone())),
+                    RedisValue::BulkString(b) => out.push(b.clone()),
+                    RedisValue::SimpleString(s) => out.push(s.clone()),
                     _ => {
                         return Err(CommandError::InvalidArgument(
                             "command arguments must be strings",
@@ -126,7 +136,7 @@ fn normalize_command_args(value: &RedisValue) -> Result<Vec<RedisValue>, Command
             for (i, &b) in line.iter().enumerate() {
                 if b.is_ascii_whitespace() {
                     if let Some(s) = token_start {
-                        out.push(RedisValue::BulkString(Bytes::copy_from_slice(&line[s..i])));
+                        out.push(Bytes::copy_from_slice(&line[s..i]));
                         token_start = None;
                     }
                 } else if token_start.is_none() {
@@ -134,7 +144,7 @@ fn normalize_command_args(value: &RedisValue) -> Result<Vec<RedisValue>, Command
                 }
             }
             if let Some(s) = token_start {
-                out.push(RedisValue::BulkString(Bytes::copy_from_slice(&line[s..])));
+                out.push(Bytes::copy_from_slice(&line[s..]));
             }
             Ok(out)
         }
@@ -144,17 +154,15 @@ fn normalize_command_args(value: &RedisValue) -> Result<Vec<RedisValue>, Command
     }
 }
 
-impl TryFrom<&[RedisValue]> for Command {
+impl TryFrom<&[Bytes]> for Command {
     type Error = CommandError;
 
-    fn try_from(value: &[RedisValue]) -> Result<Self, Self::Error> {
+    fn try_from(value: &[Bytes]) -> Result<Self, Self::Error> {
         if value.len() == 0 {
             return Ok(Command::NoOp);
         }
 
-        let RedisValue::BulkString(first_bytes) = &value[0] else {
-            return Err(CommandError::InvalidCommand("Command is not a string"));
-        };
+        let first_bytes = value[0].as_ref();
 
         let command = String::from_utf8_lossy(first_bytes);
         println!("command: {command}");
@@ -166,17 +174,12 @@ impl TryFrom<&[RedisValue]> for Command {
                         "ECHO command requires a single argument",
                     ));
                 }
-                let RedisValue::BulkString(arg_bytes) = &value[1] else {
-                    return Err(CommandError::InvalidArgument(
-                        "ECHO command requires a string argument",
-                    ));
-                };
-                if !str::from_utf8(arg_bytes).is_ok() {
+                if !str::from_utf8(&value[1]).is_ok() {
                     return Err(CommandError::InvalidArgument(
                         "ECHO command requires a valid UTF-8 string argument",
                     ));
                 }
-                Ok(Command::Echo(arg_bytes.clone()))
+                Ok(Command::Echo(value[1].clone()))
             }
             "SET" => {
                 let operation = SetOperation::try_from_args(&value[1..])?;
@@ -192,12 +195,11 @@ impl TryFrom<&[RedisValue]> for Command {
                         "GET command requires a single argument",
                     ));
                 }
-                let RedisValue::BulkString(key) = &value[1] else {
-                    return Err(CommandError::InvalidArgument(
-                        "GET command requires a string key",
-                    ));
-                };
-                Ok(Command::Get(key.clone()))
+                Ok(Command::Get(value[1].clone()))
+            }
+            "LRANGE" => {
+                let operation = RangeOperation::try_from_args(&value[1..])?;
+                Ok(Command::Lrange(operation))
             }
             _ => Err(CommandError::InvalidCommand("Unknown command")),
         }
