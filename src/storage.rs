@@ -18,11 +18,16 @@ pub struct SetOperation {
     expiration: Option<DateTime<Utc>>,
 }
 
+pub struct PushOperation {
+    key: Bytes,
+    values: Vec<Bytes>,
+}
+
 pub fn set(operation: SetOperation) {
     STORAGE.lock().unwrap().insert(
         operation.key,
         StoredValue {
-            value: operation.value,
+            value: Value::Single(operation.value),
             expires_at: operation.expiration,
         },
     );
@@ -36,41 +41,40 @@ pub fn get(key: Bytes) -> Option<Bytes> {
                 lock.remove(&key);
                 None
             } else {
-                let ret = Bytes::clone(&stored_value.value);
+                let ret = match stored_value.value {
+                    Value::Single(ref value) => Some(Bytes::clone(value)),
+                    Value::List(ref values) => values.last().cloned(),
+                };
 
                 // Ask the borrow checker to help us to returning a value that would hold the lock
                 drop(lock);
 
-                Some(ret)
+                ret
             }
         }
         None => None,
     }
 }
 
+pub fn push(operation: PushOperation) -> usize {
+    let mut lock = STORAGE.lock().unwrap();
+    let entry = lock.entry(operation.key).or_insert_with(|| StoredValue {
+        value: Value::List(vec![]),
+        expires_at: None,
+    });
+    let stub = Value::List(vec![]);
+    let mut new_value = match std::mem::replace(&mut entry.value, stub) {
+        Value::List(values) => values,
+        Value::Single(value) => vec![value],
+    };
+    new_value.extend(operation.values);
+    let ret = new_value.len();
+
+    entry.value = Value::List(new_value);
+    ret
+}
+
 impl SetOperation {
-    pub fn new(key: Bytes, value: Bytes) -> Self {
-        Self {
-            key,
-            value,
-            expiration: None,
-        }
-    }
-
-    pub fn expires_in_seconds(self, seconds: i64) -> Self {
-        Self {
-            expiration: Some(Utc::now() + Duration::seconds(seconds)),
-            ..self
-        }
-    }
-
-    pub fn expires_in_milliseconds(self, milliseconds: i64) -> Self {
-        Self {
-            expiration: Some(Utc::now() + Duration::milliseconds(milliseconds)),
-            ..self
-        }
-    }
-
     pub fn try_from_args(args: &[RedisValue]) -> Result<Self, CommandError> {
         if args.len() < 2 {
             return Err(CommandError::InvalidArgument(
@@ -78,50 +82,53 @@ impl SetOperation {
             ));
         }
 
-        let Some(key) = args[0].try_bytes() else {
+        let RedisValue::BulkString(key) = &args[0] else {
             return Err(CommandError::InvalidArgument(
                 "SET command requires a string argument",
             ));
         };
+        let key = key.clone();
 
-        let Some(value) = args[1].try_bytes() else {
+        let RedisValue::BulkString(value) = &args[1] else {
             return Err(CommandError::InvalidArgument(
                 "SET command requires a string argument",
             ));
         };
+        let value = value.clone();
 
-        let expiration_ms =
-            (args.len() >= 3)
-                .then(|| -> Result<i64, CommandError> {
-                    let mult = match args[2].try_bytes().as_deref().ok_or(
-                        CommandError::InvalidArgument("SET command requires a string argument"),
-                    )? {
-                        b"EX" => 1000,
-                        b"PX" => 1,
-                        _ => {
-                            return Err(CommandError::InvalidArgument(
-                                "Unexpected argument after key",
-                            ));
-                        }
-                    };
+        let expiration_ms = (args.len() >= 3)
+            .then(|| -> Result<i64, CommandError> {
+                let RedisValue::BulkString(opt) = &args[2] else {
+                    return Err(CommandError::InvalidArgument(
+                        "SET command requires a string argument",
+                    ));
+                };
+                let mult = match opt.as_ref() {
+                    b"EX" => 1000,
+                    b"PX" => 1,
+                    _ => {
+                        return Err(CommandError::InvalidArgument(
+                            "Unexpected argument after key",
+                        ));
+                    }
+                };
 
-                    let value = args
-                        .get(3)
-                        .ok_or(CommandError::InvalidArgument(
-                            "Missing value after expiration type",
-                        ))?
-                        .try_bytes()
-                        .ok_or(CommandError::InvalidArgument(
-                            "SET command requires a string argument",
-                        ))?;
+                let RedisValue::BulkString(exp) = args.get(3).ok_or(
+                    CommandError::InvalidArgument("Missing value after expiration type"),
+                )?
+                else {
+                    return Err(CommandError::InvalidArgument(
+                        "SET command requires a string argument",
+                    ));
+                };
 
-                    str::from_utf8(value.as_ref())
-                        .map_err(|_| CommandError::InvalidArgument("Invalid expiration value"))?
-                        .parse::<i64>()
-                        .map_err(|_| CommandError::InvalidArgument("Invalid expiration value"))
-                        .map(|ms| ms * mult)
-                })
-                .transpose()?;
+                str::from_utf8(exp.as_ref())
+                    .map_err(|_| CommandError::InvalidArgument("Invalid expiration value"))?
+                    .parse::<i64>()
+                    .map_err(|_| CommandError::InvalidArgument("Invalid expiration value"))
+                    .map(|ms| ms * mult)
+            })
+            .transpose()?;
 
         Ok(Self {
             key,
@@ -131,7 +138,42 @@ impl SetOperation {
     }
 }
 
+impl PushOperation {
+    pub fn try_from_args(args: &[RedisValue]) -> Result<Self, CommandError> {
+        if args.len() < 2 {
+            return Err(CommandError::InvalidArgument(
+                "PUSH command requires at least two arguments",
+            ));
+        }
+
+        let RedisValue::BulkString(key) = &args[0] else {
+            return Err(CommandError::InvalidArgument(
+                "PUSH command requires a string key",
+            ));
+        };
+
+        let mut values = Vec::with_capacity(args.len() - 1);
+        for arg in &args[1..] {
+            let RedisValue::BulkString(v) = arg else {
+                return Err(CommandError::InvalidArgument(
+                    "PUSH command requires string arguments",
+                ));
+            };
+            values.push(v.clone());
+        }
+
+        Ok(Self {
+            key: key.clone(),
+            values,
+        })
+    }
+}
 struct StoredValue {
-    value: Bytes,
+    value: Value,
     expires_at: Option<DateTime<Utc>>,
+}
+
+enum Value {
+    Single(Bytes),
+    List(Vec<Bytes>),
 }

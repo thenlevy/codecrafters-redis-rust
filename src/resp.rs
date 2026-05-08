@@ -36,7 +36,9 @@ impl Encoder<RedisValue> for RespParser {
     fn encode(&mut self, item: RedisValue, dst: &mut BytesMut) -> Result<(), Self::Error> {
         match item {
             RedisValue::Integer(i) => {
-                dst.extend_from_slice(format!("-{i}\r\n").as_bytes());
+                dst.extend_from_slice(b":");
+                dst.extend_from_slice(i.to_string().as_bytes());
+                dst.extend_from_slice(b"\r\n");
             }
             RedisValue::SimpleString(s) => {
                 dst.extend_from_slice(b"+");
