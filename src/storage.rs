@@ -84,7 +84,7 @@ impl SetOperation {
             ));
         };
 
-        let Some(value) = args[0].try_bytes() else {
+        let Some(value) = args[1].try_bytes() else {
             return Err(CommandError::InvalidArgument(
                 "SET command requires a string argument",
             ));
