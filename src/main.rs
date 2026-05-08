@@ -74,7 +74,7 @@ async fn handle_connection(stream: TcpStream, address: SocketAddr) -> Result<(),
                     .lock()
                     .unwrap()
                     .get(&key)
-                    .map(|value| RedisValue::SimpleString(Bytes::clone(value)))
+                    .map(|value| RedisValue::BulkString(Bytes::clone(value)))
                     .or(Some(RedisValue::Null)),
                 Command::NoOp => None,
             },
