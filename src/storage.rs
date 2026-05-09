@@ -1,8 +1,8 @@
-use super::CommandError;
+use crate::command::{parse_errors, CommandError};
 
 use {
     bytes::Bytes,
-    chrono::{DateTime, Duration, Utc},
+    chrono::{DateTime, Utc},
     std::{
         collections::HashMap,
         sync::{Arc, LazyLock, Mutex},
@@ -13,20 +13,20 @@ static STORAGE: LazyLock<Arc<Mutex<HashMap<Bytes, StoredValue>>>> =
     LazyLock::new(|| Arc::new(Mutex::new(HashMap::new())));
 
 pub struct SetOperation {
-    key: Bytes,
-    value: Bytes,
-    expiration: Option<DateTime<Utc>>,
+    pub(crate) key: Bytes,
+    pub(crate) value: Bytes,
+    pub(crate) expiration: Option<DateTime<Utc>>,
 }
 
 pub struct PushOperation {
-    key: Bytes,
-    values: Vec<Bytes>,
+    pub(crate) key: Bytes,
+    pub(crate) values: Vec<Bytes>,
 }
 
 pub struct RangeOperation {
-    key: Bytes,
-    start: isize,
-    end: isize,
+    pub(crate) key: Bytes,
+    pub(crate) start: isize,
+    pub(crate) end: isize,
 }
 
 pub fn set(operation: SetOperation) {
@@ -117,92 +117,6 @@ pub fn push(operation: PushOperation) -> usize {
     ret
 }
 
-impl SetOperation {
-    pub fn try_from_args(args: &[Bytes]) -> Result<Self, CommandError> {
-        if args.len() < 2 {
-            return Err(CommandError::InvalidArgument(
-                "SET command requires at least two arguments",
-            ));
-        }
-
-        let key = args[0].clone();
-        let value = args[1].clone();
-
-        let expiration_ms = (args.len() >= 3)
-            .then(|| -> Result<i64, CommandError> {
-                let mult = match args[2].as_ref() {
-                    b"EX" => 1000,
-                    b"PX" => 1,
-                    _ => {
-                        return Err(CommandError::InvalidArgument(
-                            "Unexpected argument after key",
-                        ));
-                    }
-                };
-
-                let exp = args.get(3).ok_or(CommandError::InvalidArgument(
-                    "Missing value after expiration type",
-                ))?;
-
-                str::from_utf8(exp.as_ref())
-                    .map_err(|_| CommandError::InvalidArgument("Invalid expiration value"))?
-                    .parse::<i64>()
-                    .map_err(|_| CommandError::InvalidArgument("Invalid expiration value"))
-                    .map(|ms| ms * mult)
-            })
-            .transpose()?;
-
-        Ok(Self {
-            key,
-            value,
-            expiration: expiration_ms.map(|ms| Utc::now() + Duration::milliseconds(ms)),
-        })
-    }
-}
-
-impl PushOperation {
-    pub fn try_from_args(args: &[Bytes]) -> Result<Self, CommandError> {
-        if args.len() < 2 {
-            return Err(CommandError::InvalidArgument(
-                "RPUSH command requires at least two arguments",
-            ));
-        }
-
-        let key = args[0].clone();
-        let values = args[1..].to_vec();
-
-        Ok(Self { key, values })
-    }
-}
-
-impl RangeOperation {
-    pub fn try_from_args(args: &[Bytes]) -> Result<Self, CommandError> {
-        if args.len() != 3 {
-            return Err(CommandError::InvalidArgument(
-                "LRANGE command requires key, start, and stop",
-            ));
-        }
-
-        let key = args[0].clone();
-
-        let start = str::from_utf8(args[1].as_ref())
-            .map_err(|_| {
-                CommandError::InvalidArgument("LRANGE start must be a valid UTF-8 integer")
-            })?
-            .parse::<isize>()
-            .map_err(|_| CommandError::InvalidArgument("LRANGE start must be an integer"))?;
-
-        let end = str::from_utf8(args[2].as_ref())
-            .map_err(|_| {
-                CommandError::InvalidArgument("LRANGE stop must be a valid UTF-8 integer")
-            })?
-            .parse::<isize>()
-            .map_err(|_| CommandError::InvalidArgument("LRANGE stop must be an integer"))?;
-
-        Ok(Self { key, start, end })
-    }
-}
-
 pub fn get_range(operation: RangeOperation) -> Result<Vec<Bytes>, CommandError> {
     let RangeOperation { key, start, end } = operation;
 
@@ -222,7 +136,7 @@ pub fn get_range(operation: RangeOperation) -> Result<Vec<Bytes>, CommandError> 
                             .unwrap_or_default();
                         Ok(out)
                     }
-                    Value::Single(_) => Err(CommandError::InvalidArgument("value is not a list")),
+                    Value::Single(_) => Err(CommandError::InvalidArgument(parse_errors::VALUE_TYPE_MISMATCH)),
                 };
 
                 drop(lock);

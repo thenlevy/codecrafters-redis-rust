@@ -77,11 +77,21 @@ dependencies = [
  "anyhow",
  "bytes",
  "chrono",
+ "command_spec_derive",
  "futures",
  "memchr",
  "thiserror",
  "tokio",
  "tokio-util",
+]
+
+[[package]]
+name = "command_spec_derive"
+version = "0.1.0"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn",
 ]
 
 [[package]]
