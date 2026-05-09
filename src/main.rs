@@ -72,6 +72,7 @@ async fn handle_connection(stream: TcpStream, _address: SocketAddr) -> Result<()
                         )),
                         Err(e) => Some(RedisValue::Error(e.to_string())),
                     },
+                    Command::Llen(key) => Some(RedisValue::Integer(storage::llen(key) as i64)),
                     Command::NoOp => None,
                 },
             },

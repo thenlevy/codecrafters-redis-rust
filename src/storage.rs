@@ -134,6 +134,23 @@ pub fn push(operation: PushOperation) -> usize {
     ret
 }
 
+pub fn llen(key: Bytes) -> usize {
+    match STORAGE.lock().unwrap().get(&key) {
+        None => 0,
+        Some(stored_value) => {
+            if stored_value.expires_at.is_some_and(|d| d < Utc::now()) {
+                STORAGE.lock().unwrap().remove(&key);
+                0
+            } else {
+                match &stored_value.value {
+                    Value::List(values) => values.len(),
+                    Value::Single(_) => 1,
+                }
+            }
+        }
+    }
+}
+
 pub fn get_range(operation: RangeOperation) -> Result<Vec<Bytes>, CommandError> {
     let RangeOperation { key, start, end } = operation;
 

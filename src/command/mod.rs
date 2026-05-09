@@ -156,6 +156,13 @@ impl From<LRangeParsed> for RangeOperation {
     }
 }
 
+#[derive(CommandSpec)]
+#[command_spec(name = "LLEN", exact_tail_tokens = 1)]
+pub struct LLenParsed {
+    #[positional(cardinality = exactly_one)]
+    pub key: Bytes,
+}
+
 pub enum Command {
     Ping,
     Echo(Bytes),
@@ -163,6 +170,7 @@ pub enum Command {
     Push(PushOperation),
     Get(Bytes),
     Lrange(RangeOperation),
+    Llen(Bytes),
     NoOp,
 }
 
@@ -205,6 +213,10 @@ pub fn parse(words: &[Bytes]) -> Result<Command, CommandError> {
         "LRANGE" => {
             let p = LRangeParsed::try_from_tail(tail)?;
             Ok(Command::Lrange(p.into()))
+        }
+        "LLEN" => {
+            let p = LLenParsed::try_from_tail(tail)?;
+            Ok(Command::Llen(p.key))
         }
         _ => Err(CommandError::InvalidCommand(
             parse_errors::UNKNOWN_COMMAND_WORD,
