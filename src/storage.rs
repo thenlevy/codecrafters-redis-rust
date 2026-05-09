@@ -202,10 +202,6 @@ fn try_blpop(lock: &mut HashMap<Bytes, StoredValue>, key: &Bytes) -> Option<(Byt
     }
 }
 
-/// Single-key [`BLPOP`](https://redis.io/docs/latest/commands/blpop/): block until `key` has a
-/// left-popped element. If `timeout_secs > 0`, return [`None`] when that many seconds pass with no
-/// element. If `timeout_secs == 0`, wait indefinitely (no timeout). Never holds [`STORAGE`] across
-/// `.await`.
 pub async fn blpop(key: Bytes, timeout_secs: f64) -> Option<(Bytes, Bytes)> {
     loop {
         if let Some(pair) = try_blpop(&mut STORAGE.lock().unwrap(), &key) {
@@ -220,7 +216,7 @@ pub async fn blpop(key: Bytes, timeout_secs: f64) -> Option<(Bytes, Bytes)> {
         };
 
         if timeout_secs > 0.0 {
-            let mut sleep = tokio::time::sleep(Duration::from_secs_f64(timeout_secs));
+            let sleep = tokio::time::sleep(Duration::from_secs_f64(timeout_secs));
             tokio::pin!(sleep);
             tokio::select! {
                 () = sleep.as_mut() => return None,

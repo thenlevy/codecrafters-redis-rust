@@ -61,6 +61,9 @@ impl Encoder<RedisValue> for RespParser {
             RedisValue::Null => {
                 dst.extend_from_slice(b"$-1\r\n");
             }
+            RedisValue::NullArray => {
+                dst.extend_from_slice(b"*-1\r\n");
+            }
             RedisValue::Error(e) => {
                 dst.extend_from_slice(format!("-{e}\r\n").as_bytes());
             }

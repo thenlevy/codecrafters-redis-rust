@@ -94,7 +94,7 @@ async fn handle_connection(stream: TcpStream, _address: SocketAddr) -> Result<()
                                 RedisValue::BulkString(k),
                                 RedisValue::BulkString(v),
                             ])),
-                            None => Some(RedisValue::Null),
+                            None => Some(RedisValue::NullArray),
                         }
                     }
                     Command::NoOp => None,
@@ -120,4 +120,5 @@ pub enum RedisValue {
     Array(Vec<RedisValue>),
     Error(String),
     Null,
+    NullArray,
 }
