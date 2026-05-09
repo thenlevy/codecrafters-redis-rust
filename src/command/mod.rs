@@ -5,7 +5,7 @@ pub mod spec_parse;
 
 use command_spec_derive::{CommandSpec, OptionGroupSpec};
 
-use crate::storage::{PushOperation, RangeOperation, SetOperation};
+use crate::storage::{PushKind, PushOperation, RangeOperation, SetOperation};
 
 use {
     bytes::Bytes,
@@ -80,6 +80,15 @@ pub struct RPushParsed {
 }
 
 #[derive(CommandSpec)]
+#[command_spec(name = "LPUSH")]
+pub struct LPushParsed {
+    #[positional(cardinality = exactly_one)]
+    pub key: Bytes,
+    #[positional(cardinality = one_or_many)]
+    pub values: Vec<Bytes>,
+}
+
+#[derive(CommandSpec)]
 #[command_spec(name = "LRANGE", exact_tail_tokens = 3)]
 pub struct LRangeParsed {
     #[positional(cardinality = exactly_one)]
@@ -117,9 +126,20 @@ fn parse_ttl_ms(b: Bytes, mult: i64) -> Result<i64, CommandError> {
         .map(|v| v * mult)
 }
 
+impl From<LPushParsed> for PushOperation {
+    fn from(p: LPushParsed) -> Self {
+        PushOperation {
+            kind: PushKind::LPush,
+            key: p.key,
+            values: p.values,
+        }
+    }
+}
+
 impl From<RPushParsed> for PushOperation {
     fn from(p: RPushParsed) -> Self {
         PushOperation {
+            kind: PushKind::RPush,
             key: p.key,
             values: p.values,
         }
@@ -169,6 +189,10 @@ pub fn parse(words: &[Bytes]) -> Result<Command, CommandError> {
         "SET" => {
             let p = SetParsed::try_from_tail(tail)?;
             Ok(Command::Set(p.try_into()?))
+        }
+        "LPUSH" => {
+            let p = LPushParsed::try_from_tail(tail)?;
+            Ok(Command::Push(p.into()))
         }
         "RPUSH" => {
             let p = RPushParsed::try_from_tail(tail)?;

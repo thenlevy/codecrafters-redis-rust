@@ -4,7 +4,7 @@ use {
     bytes::Bytes,
     chrono::{DateTime, Utc},
     std::{
-        collections::HashMap,
+        collections::{HashMap, VecDeque},
         sync::{Arc, LazyLock, Mutex},
     },
 };
@@ -18,7 +18,13 @@ pub struct SetOperation {
     pub(crate) expiration: Option<DateTime<Utc>>,
 }
 
+pub enum PushKind {
+    RPush,
+    LPush,
+}
+
 pub struct PushOperation {
+    pub(crate) kind: PushKind,
     pub(crate) key: Bytes,
     pub(crate) values: Vec<Bytes>,
 }
@@ -49,7 +55,7 @@ pub fn get(key: Bytes) -> Option<Bytes> {
             } else {
                 let ret = match stored_value.value {
                     Value::Single(ref value) => Some(Bytes::clone(value)),
-                    Value::List(ref values) => values.last().cloned(),
+                    Value::List(ref values) => values.back().cloned(),
                 };
 
                 // Ask the borrow checker to help us to returning a value that would hold the lock
@@ -106,15 +112,22 @@ fn list_range_bounds(mut start: isize, mut end: isize, len: usize) -> Option<(us
 pub fn push(operation: PushOperation) -> usize {
     let mut lock = STORAGE.lock().unwrap();
     let entry = lock.entry(operation.key).or_insert_with(|| StoredValue {
-        value: Value::List(vec![]),
+        value: Value::List(VecDeque::new()),
         expires_at: None,
     });
-    let stub = Value::List(vec![]);
+    let stub = Value::List(VecDeque::new());
     let mut new_value = match std::mem::replace(&mut entry.value, stub) {
         Value::List(values) => values,
-        Value::Single(value) => vec![value],
+        Value::Single(value) => VecDeque::from_iter([value]),
     };
-    new_value.extend(operation.values);
+    match operation.kind {
+        PushKind::RPush => new_value.extend(operation.values),
+        PushKind::LPush => {
+            for v in operation.values.into_iter().rev() {
+                new_value.push_front(v);
+            }
+        }
+    }
     let ret = new_value.len();
 
     entry.value = Value::List(new_value);
@@ -136,7 +149,14 @@ pub fn get_range(operation: RangeOperation) -> Result<Vec<Bytes>, CommandError> 
                     Value::List(values) => {
                         let bounds = list_range_bounds(start, end, values.len());
                         let out = bounds
-                            .map(|(s, e)| values[s..=e].to_vec())
+                            .map(|(s, e)| {
+                                values
+                                    .iter()
+                                    .skip(s)
+                                    .take(e - s + 1)
+                                    .map(|v| Bytes::clone(v))
+                                    .collect()
+                            })
                             .unwrap_or_default();
                         Ok(out)
                     }
@@ -158,5 +178,5 @@ struct StoredValue {
 
 enum Value {
     Single(Bytes),
-    List(Vec<Bytes>),
+    List(VecDeque<Bytes>),
 }
