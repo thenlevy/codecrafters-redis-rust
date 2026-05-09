@@ -164,10 +164,12 @@ pub struct LLenParsed {
 }
 
 #[derive(CommandSpec)]
-#[command_spec(name = "LPOP", exact_tail_tokens = 1)]
+#[command_spec(name = "LPOP")]
 pub struct LPopParsed {
     #[positional(cardinality = exactly_one)]
     pub key: Bytes,
+    #[positional(cardinality = zero_or_one)]
+    pub count: Option<usize>,
 }
 
 pub enum Command {
@@ -178,7 +180,7 @@ pub enum Command {
     Get(Bytes),
     Lrange(RangeOperation),
     Llen(Bytes),
-    Lpop(Bytes),
+    Lpop(Bytes, usize),
     NoOp,
 }
 
@@ -228,7 +230,7 @@ pub fn parse(words: &[Bytes]) -> Result<Command, CommandError> {
         }
         "LPOP" => {
             let p = LPopParsed::try_from_tail(tail)?;
-            Ok(Command::Lpop(p.key))
+            Ok(Command::Lpop(p.key, p.count.unwrap_or(1)))
         }
         _ => Err(CommandError::InvalidCommand(
             parse_errors::UNKNOWN_COMMAND_WORD,

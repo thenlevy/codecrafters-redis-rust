@@ -65,6 +65,7 @@ fn find_command_spec(attrs: &[Attribute]) -> syn::Result<(String, bool, Option<u
 enum Cardinality {
     ExactlyOne,
     OneOrMany,
+    ZeroOrOne,
 }
 
 #[derive(Clone, Copy)]
@@ -82,7 +83,12 @@ fn parse_positional(attr: &Attribute) -> syn::Result<PositionalCfg> {
             cardinality = match v.to_string().as_str() {
                 "exactly_one" => Cardinality::ExactlyOne,
                 "one_or_many" => Cardinality::OneOrMany,
-                _ => return Err(meta.error("expected exactly_one | one_or_many")),
+                "zero_or_one" => Cardinality::ZeroOrOne,
+                _ => {
+                    return Err(meta.error(
+                        "expected exactly_one | one_or_many | zero_or_one",
+                    ));
+                }
             };
             Ok(())
         } else if meta.path.is_ident("utf8_echo") {
@@ -170,6 +176,33 @@ fn is_type_bytes(ty: &Type) -> bool {
     matches!(ty, Type::Path(p)
         if p.qself.is_none()
             && p.path.segments.last().is_some_and(|s| s.ident == "Bytes"))
+}
+
+fn option_inner_type(ty: &Type) -> Option<&Type> {
+    let Type::Path(p) = ty else {
+        return None;
+    };
+    if p.qself.is_some() {
+        return None;
+    }
+    let seg = p.path.segments.last()?;
+    if seg.ident != "Option" {
+        return None;
+    }
+    let syn::PathArguments::AngleBracketed(ab) = &seg.arguments else {
+        return None;
+    };
+    match ab.args.first()? {
+        syn::GenericArgument::Type(t) => Some(t),
+        _ => None,
+    }
+}
+
+fn is_type_usize(ty: &Type) -> bool {
+    matches!(ty, Type::Path(p)
+        if p.qself.is_none()
+            && p.path.segments.len() == 1
+            && p.path.segments[0].ident == "usize")
 }
 
 fn is_type_vec_bytes(ty: &Type) -> bool {
@@ -371,6 +404,65 @@ fn quote_positional_stmts(
                     ));
                 }
                 idx = tokens.len();
+            })
+        }
+        Cardinality::ZeroOrOne => {
+            let inner = option_inner_type(ty).ok_or_else(|| {
+                syn::Error::new_spanned(
+                    ty,
+                    "positional zero_or_one expects Option<Bytes>, Option<isize>, or Option<usize>",
+                )
+            })?;
+            if is_type_isize(inner) {
+                return Ok(quote! {
+                    let #fname: ::std::option::Option<isize> = if idx >= tokens.len() {
+                        ::std::option::Option::None
+                    } else {
+                        ::std::option::Option::Some(
+                            crate::command::spec_parse::parse_isize_token(tokens, &mut idx)?,
+                        )
+                    };
+                });
+            }
+            if is_type_usize(inner) {
+                return Ok(quote! {
+                    let #fname: ::std::option::Option<usize> = if idx >= tokens.len() {
+                        ::std::option::Option::None
+                    } else {
+                        ::std::option::Option::Some(
+                            crate::command::spec_parse::parse_usize_token(tokens, &mut idx)?,
+                        )
+                    };
+                });
+            }
+            if !is_type_bytes(inner) {
+                return Err(syn::Error::new_spanned(
+                    ty,
+                    "positional zero_or_one expects Option<Bytes>, Option<isize>, or Option<usize>",
+                ));
+            }
+            let utf_gate = if cfg.utf8_echo {
+                quote! {
+                    if let ::std::option::Option::Some(ref b) = #fname {
+                        ::core::str::from_utf8(b.as_ref()).map_err(|_| {
+                            crate::command::CommandError::InvalidArgument(
+                                crate::command::parse_errors::INVALID_UTF8,
+                            )
+                        })?;
+                    }
+                }
+            } else {
+                quote! {}
+            };
+            Ok(quote! {
+                let #fname: ::std::option::Option<bytes::Bytes> = if idx >= tokens.len() {
+                    ::std::option::Option::None
+                } else {
+                    let b = tokens[idx].clone();
+                    idx += 1usize;
+                    ::std::option::Option::Some(b)
+                };
+                #utf_gate
             })
         }
     }

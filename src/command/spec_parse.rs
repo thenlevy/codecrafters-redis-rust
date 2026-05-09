@@ -33,6 +33,23 @@ pub fn parse_isize_token(tokens: &[Bytes], idx: &mut usize) -> Result<isize, Com
     Ok(n)
 }
 
+/// Parse one token as UTF-8 then as `usize` (e.g. optional LPOP count).
+pub fn parse_usize_token(tokens: &[Bytes], idx: &mut usize) -> Result<usize, CommandError> {
+    if *idx >= tokens.len() {
+        return Err(CommandError::InvalidArgument(
+            parse_errors::MISSING_ARGUMENT,
+        ));
+    }
+    let b = &tokens[*idx];
+    let s = ::core::str::from_utf8(b.as_ref())
+        .map_err(|_| CommandError::InvalidArgument(parse_errors::INVALID_UTF8))?;
+    let n = s
+        .parse::<usize>()
+        .map_err(|_| CommandError::InvalidArgument(parse_errors::INVALID_INTEGER))?;
+    *idx += 1;
+    Ok(n)
+}
+
 #[cfg(test)]
 mod derived_names {
     use crate::command::{EchoParsed, GetParsed, PingParsed};

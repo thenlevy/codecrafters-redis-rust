@@ -151,19 +151,25 @@ pub fn llen(key: Bytes) -> usize {
     }
 }
 
-pub fn lpop(key: Bytes) -> Option<Bytes> {
+pub fn lpop(key: Bytes, count: usize) -> Vec<Bytes> {
     let mut lock = STORAGE.lock().unwrap();
     match lock.get_mut(&key) {
-        None => None,
+        None => vec![],
         Some(stored_value) => {
             if stored_value.expires_at.is_some_and(|d| d < Utc::now()) {
                 lock.remove(&key);
-                None
+                vec![]
             } else {
                 match &mut stored_value.value {
-                    Value::List(values) => values.pop_front().clone(),
+                    Value::List(values) => {
+                        let ret = values.drain(0..count).collect();
+                        if values.is_empty() {
+                            lock.remove(&key);
+                        }
+                        ret
+                    }
                     Value::Single(value) => {
-                        let ret = Some(Bytes::clone(value));
+                        let ret = vec![Bytes::clone(value)];
                         lock.remove(&key);
                         ret
                     }

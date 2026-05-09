@@ -73,9 +73,21 @@ async fn handle_connection(stream: TcpStream, _address: SocketAddr) -> Result<()
                         Err(e) => Some(RedisValue::Error(e.to_string())),
                     },
                     Command::Llen(key) => Some(RedisValue::Integer(storage::llen(key) as i64)),
-                    Command::Lpop(key) => storage::lpop(key)
-                        .map(RedisValue::BulkString)
-                        .or(Some(RedisValue::Null)),
+                    Command::Lpop(key, count) => {
+                        if count == 0 {
+                            Some(RedisValue::Error("unexpected llpop count 0".to_string()))
+                        } else {
+                            let ret = storage::lpop(key, count);
+
+                            match ret.len() {
+                                0 => Some(RedisValue::Null),
+                                1 => Some(RedisValue::BulkString(ret[0].clone())),
+                                _ => Some(RedisValue::Array(
+                                    ret.into_iter().map(RedisValue::BulkString).collect(),
+                                )),
+                            }
+                        }
+                    }
                     Command::NoOp => None,
                 },
             },
