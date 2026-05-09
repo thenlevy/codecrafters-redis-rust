@@ -1,4 +1,4 @@
-use crate::command::{parse_errors, CommandError};
+use crate::command::{CommandError, parse_errors};
 
 use {
     bytes::Bytes,
@@ -62,40 +62,44 @@ pub fn get(key: Bytes) -> Option<Bytes> {
     }
 }
 
-/// Redis-style inclusive range on a list with length `len`. Returns `(start_idx, stop_idx)`
-/// inclusive, or [`None`] when the logical range is empty.
-fn list_range_bounds(start: isize, end: isize, len: usize) -> Option<(usize, usize)> {
+/// Inclusive `(start, stop)` slice bounds for a list of length `len`, matching Redis
+/// [`LRANGE`](https://redis.io/docs/latest/commands/lrange/) index rules:
+/// zero-based inclusive range, negative indices count from the end (`-1` is last),
+/// `start` is clamped to `0` if it is still negative after one `+ len` adjustment,
+/// `stop` beyond the tail is clamped to `len - 1`, and an empty range is produced when
+/// `start` is past the tail, or `start > stop` after normalization (including when
+/// `stop` remains negative after one `+ len` adjustment—see “Out-of-range indexes” on
+/// that page). Returns [`None`] for an empty logical range.
+fn list_range_bounds(mut start: isize, mut end: isize, len: usize) -> Option<(usize, usize)> {
     if len == 0 {
         return None;
     }
-    let l = len as isize;
+    let len = len as isize;
 
-    let mut s = start;
-    if s < 0 {
-        s += l;
-        if s < 0 {
-            s = 0;
+    if start < 0 {
+        start += len;
+        if start < 0 {
+            start = 0;
         }
     }
-    if s >= l {
+    if start >= len {
         return None;
     }
 
-    let mut e = end;
-    if e < 0 {
-        e += l;
-        if e < 0 {
+    if end < 0 {
+        end += len;
+        if end < 0 {
             return None;
         }
     }
-    if e >= l {
-        e = l - 1;
+    if end >= len {
+        end = len - 1;
     }
 
-    if s > e {
+    if start > end {
         None
     } else {
-        Some((s as usize, e as usize))
+        Some((start as usize, end as usize))
     }
 }
 
@@ -136,7 +140,9 @@ pub fn get_range(operation: RangeOperation) -> Result<Vec<Bytes>, CommandError> 
                             .unwrap_or_default();
                         Ok(out)
                     }
-                    Value::Single(_) => Err(CommandError::InvalidArgument(parse_errors::VALUE_TYPE_MISMATCH)),
+                    Value::Single(_) => Err(CommandError::InvalidArgument(
+                        parse_errors::VALUE_TYPE_MISMATCH,
+                    )),
                 };
 
                 drop(lock);

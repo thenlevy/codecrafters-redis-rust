@@ -7,8 +7,10 @@ use command_spec_derive::{CommandSpec, OptionGroupSpec};
 
 use crate::storage::{PushOperation, RangeOperation, SetOperation};
 
-use bytes::Bytes;
-use chrono::{Duration, Utc};
+use {
+    bytes::Bytes,
+    chrono::{Duration, Utc},
+};
 
 use crate::RedisValue;
 
@@ -180,7 +182,9 @@ pub fn parse(words: &[Bytes]) -> Result<Command, CommandError> {
             let p = LRangeParsed::try_from_tail(tail)?;
             Ok(Command::Lrange(p.into()))
         }
-        _ => Err(CommandError::InvalidCommand(parse_errors::UNKNOWN_COMMAND_WORD)),
+        _ => Err(CommandError::InvalidCommand(
+            parse_errors::UNKNOWN_COMMAND_WORD,
+        )),
     }
 }
 
@@ -220,9 +224,7 @@ pub fn normalize_command_args(value: &RedisValue) -> Result<Vec<Bytes>, CommandE
             }
             Ok(out)
         }
-        _ => Err(CommandError::InvalidCommand(
-            parse_errors::TOP_LEVEL_SHAPE,
-        )),
+        _ => Err(CommandError::InvalidCommand(parse_errors::TOP_LEVEL_SHAPE)),
     }
 }
 

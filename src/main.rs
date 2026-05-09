@@ -3,7 +3,7 @@ mod resp;
 mod storage;
 
 use {
-    command::{normalize_command_args, parse, Command, CommandError},
+    command::{Command, CommandError, normalize_command_args, parse},
     resp::RespParser,
 };
 
@@ -68,10 +68,7 @@ async fn handle_connection(stream: TcpStream, _address: SocketAddr) -> Result<()
                         .or(Some(RedisValue::Null)),
                     Command::Lrange(operation) => match storage::get_range(operation) {
                         Ok(elements) => Some(RedisValue::Array(
-                            elements
-                                .into_iter()
-                                .map(RedisValue::BulkString)
-                                .collect(),
+                            elements.into_iter().map(RedisValue::BulkString).collect(),
                         )),
                         Err(e) => Some(RedisValue::Error(e.to_string())),
                     },

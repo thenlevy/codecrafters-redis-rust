@@ -2,12 +2,12 @@
 
 extern crate proc_macro;
 
-use proc_macro::TokenStream;
-use proc_macro2::Span;
-use quote::quote;
-
-use syn::parse_macro_input;
-use syn::{Attribute, Data, DeriveInput, Fields, FieldsNamed, Ident, Type};
+use {
+    proc_macro::TokenStream,
+    proc_macro2::Span,
+    quote::quote,
+    syn::{parse_macro_input, Attribute, Data, DeriveInput, Fields, FieldsNamed, Ident, Type},
+};
 
 #[proc_macro_derive(CommandSpec, attributes(command_spec, positional))]
 pub fn derive_command_spec(input: TokenStream) -> TokenStream {
@@ -186,7 +186,11 @@ fn is_type_vec_bytes(ty: &Type) -> bool {
         }
         if let syn::PathArguments::AngleBracketed(ab) = &seg.arguments {
             if let Some(syn::GenericArgument::Type(Type::Path(inner))) = ab.args.first() {
-                return inner.path.segments.last().is_some_and(|s| s.ident == "Bytes");
+                return inner
+                    .path
+                    .segments
+                    .last()
+                    .is_some_and(|s| s.ident == "Bytes");
             }
         }
     }
@@ -204,7 +208,10 @@ fn expand_command_spec(input: DeriveInput) -> syn::Result<proc_macro2::TokenStre
 
     match struct_fields(&input.data)? {
         StructFields::Unit if !ignore_remaining => {
-            return Err(syn::Error::new_spanned(&struct_ident, "unit structs require #[command_spec(ignore_remaining)]"));
+            return Err(syn::Error::new_spanned(
+                &struct_ident,
+                "unit structs require #[command_spec(ignore_remaining)]",
+            ));
         }
         _ => (),
     };
@@ -236,7 +243,10 @@ fn expand_command_spec(input: DeriveInput) -> syn::Result<proc_macro2::TokenStre
         let fname = field.ident.as_ref().unwrap();
         let fty = &field.ty;
         let role = parse_field_role(&field.attrs)?.ok_or_else(|| {
-            syn::Error::new_spanned(field, "use #[positional(...)] or #[command_spec(option_group)]")
+            syn::Error::new_spanned(
+                field,
+                "use #[positional(...)] or #[command_spec(option_group)]",
+            )
         })?;
         match role {
             FieldRole::OptionGroup => {
@@ -377,7 +387,10 @@ fn expand_option_group_spec(input: DeriveInput) -> syn::Result<proc_macro2::Toke
     let (impl_generics, ty_generics, where_clause) = generics.split_for_impl();
 
     let Data::Enum(en) = &input.data else {
-        return Err(syn::Error::new_spanned(enum_ident, "OptionGroupSpec only supports enums"));
+        return Err(syn::Error::new_spanned(
+            enum_ident,
+            "OptionGroupSpec only supports enums",
+        ));
     };
 
     let mut absent_ident: Option<Ident> = None;
@@ -413,7 +426,10 @@ fn expand_option_group_spec(input: DeriveInput) -> syn::Result<proc_macro2::Toke
 
         match (is_absent, kw_str) {
             (true, Some(_)) => {
-                return Err(syn::Error::new_spanned(v, "variant cannot be both absent and keyword"));
+                return Err(syn::Error::new_spanned(
+                    v,
+                    "variant cannot be both absent and keyword",
+                ));
             }
             (true, None) => {
                 if !matches!(&v.fields, Fields::Unit) {
@@ -423,7 +439,10 @@ fn expand_option_group_spec(input: DeriveInput) -> syn::Result<proc_macro2::Toke
                     ));
                 }
                 if absent_ident.replace(v.ident.clone()).is_some() {
-                    return Err(syn::Error::new_spanned(v, "only one absent variant allowed"));
+                    return Err(syn::Error::new_spanned(
+                        v,
+                        "only one absent variant allowed",
+                    ));
                 }
             }
             (false, Some(kw)) => {
@@ -457,8 +476,9 @@ fn expand_option_group_spec(input: DeriveInput) -> syn::Result<proc_macro2::Toke
         }
     }
 
-    let absent =
-        absent_ident.ok_or_else(|| syn::Error::new_spanned(enum_ident, "missing #[option_spec(absent)] variant"))?;
+    let absent = absent_ident.ok_or_else(|| {
+        syn::Error::new_spanned(enum_ident, "missing #[option_spec(absent)] variant")
+    })?;
 
     let mut branches = Vec::new();
     for kv in &keyword_checks {
