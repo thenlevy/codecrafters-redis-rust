@@ -151,6 +151,28 @@ pub fn llen(key: Bytes) -> usize {
     }
 }
 
+pub fn lpop(key: Bytes) -> Option<Bytes> {
+    let mut lock = STORAGE.lock().unwrap();
+    match lock.get_mut(&key) {
+        None => None,
+        Some(stored_value) => {
+            if stored_value.expires_at.is_some_and(|d| d < Utc::now()) {
+                lock.remove(&key);
+                None
+            } else {
+                match &mut stored_value.value {
+                    Value::List(values) => values.pop_front().clone(),
+                    Value::Single(value) => {
+                        let ret = Some(Bytes::clone(value));
+                        lock.remove(&key);
+                        ret
+                    }
+                }
+            }
+        }
+    }
+}
+
 pub fn get_range(operation: RangeOperation) -> Result<Vec<Bytes>, CommandError> {
     let RangeOperation { key, start, end } = operation;
 

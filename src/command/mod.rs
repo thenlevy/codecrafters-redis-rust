@@ -163,6 +163,13 @@ pub struct LLenParsed {
     pub key: Bytes,
 }
 
+#[derive(CommandSpec)]
+#[command_spec(name = "LPOP", exact_tail_tokens = 1)]
+pub struct LPopParsed {
+    #[positional(cardinality = exactly_one)]
+    pub key: Bytes,
+}
+
 pub enum Command {
     Ping,
     Echo(Bytes),
@@ -171,6 +178,7 @@ pub enum Command {
     Get(Bytes),
     Lrange(RangeOperation),
     Llen(Bytes),
+    Lpop(Bytes),
     NoOp,
 }
 
