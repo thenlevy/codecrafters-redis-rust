@@ -162,7 +162,14 @@ pub fn lpop(key: Bytes, count: usize) -> Vec<Bytes> {
             } else {
                 match &mut stored_value.value {
                     Value::List(values) => {
-                        let ret = values.drain(0..count).collect();
+                        let mut ret = Vec::new();
+                        for _ in 0..count {
+                            if let Some(value) = values.pop_front() {
+                                ret.push(value);
+                            } else {
+                                break;
+                            }
+                        }
                         if values.is_empty() {
                             lock.remove(&key);
                         }
