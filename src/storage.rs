@@ -123,7 +123,7 @@ pub fn push(operation: PushOperation) -> usize {
     match operation.kind {
         PushKind::RPush => new_value.extend(operation.values),
         PushKind::LPush => {
-            for v in operation.values.into_iter().rev() {
+            for v in operation.values.into_iter() {
                 new_value.push_front(v);
             }
         }
