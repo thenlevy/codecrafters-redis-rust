@@ -226,6 +226,10 @@ pub fn parse(words: &[Bytes]) -> Result<Command, CommandError> {
             let p = LLenParsed::try_from_tail(tail)?;
             Ok(Command::Llen(p.key))
         }
+        "LPOP" => {
+            let p = LPopParsed::try_from_tail(tail)?;
+            Ok(Command::Lpop(p.key))
+        }
         _ => Err(CommandError::InvalidCommand(
             parse_errors::UNKNOWN_COMMAND_WORD,
         )),
