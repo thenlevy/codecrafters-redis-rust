@@ -88,6 +88,15 @@ async fn handle_connection(stream: TcpStream, _address: SocketAddr) -> Result<()
                             }
                         }
                     }
+                    Command::Blpop(key, timeout_secs) => {
+                        match storage::blpop(key, timeout_secs).await {
+                            Some((k, v)) => Some(RedisValue::Array(vec![
+                                RedisValue::BulkString(k),
+                                RedisValue::BulkString(v),
+                            ])),
+                            None => Some(RedisValue::Null),
+                        }
+                    }
                     Command::NoOp => None,
                 },
             },

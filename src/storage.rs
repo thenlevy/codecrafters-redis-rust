@@ -6,11 +6,28 @@ use {
     std::{
         collections::{HashMap, VecDeque},
         sync::{Arc, LazyLock, Mutex},
+        time::Duration,
     },
+    tokio::sync::Notify,
 };
 
-static STORAGE: LazyLock<Arc<Mutex<HashMap<Bytes, StoredValue>>>> =
-    LazyLock::new(|| Arc::new(Mutex::new(HashMap::new())));
+static STORAGE: LazyLock<Mutex<HashMap<Bytes, StoredValue>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
+
+/// Wakes [`blpop`](blpop) waiters when a list key may have become non-empty. Separate mutex from
+/// [`STORAGE`] (acquire only one at a time) to avoid deadlocks.
+static LIST_WAKE: LazyLock<Mutex<HashMap<Bytes, Arc<Notify>>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
+
+fn notify_list_push(key: &Bytes) {
+    let notify = {
+        let mut wake = LIST_WAKE.lock().unwrap();
+        wake.entry(key.clone())
+            .or_insert_with(|| Arc::new(Notify::new()))
+            .clone()
+    };
+    notify.notify_one();
+}
 
 pub struct SetOperation {
     pub(crate) key: Bytes,
@@ -110,6 +127,7 @@ fn list_range_bounds(mut start: isize, mut end: isize, len: usize) -> Option<(us
 }
 
 pub fn push(operation: PushOperation) -> usize {
+    let wake_key = operation.key.clone();
     let mut lock = STORAGE.lock().unwrap();
     let entry = lock.entry(operation.key).or_insert_with(|| StoredValue {
         value: Value::List(VecDeque::new()),
@@ -131,6 +149,8 @@ pub fn push(operation: PushOperation) -> usize {
     let ret = new_value.len();
 
     entry.value = Value::List(new_value);
+    drop(lock);
+    notify_list_push(&wake_key);
     ret
 }
 
@@ -147,6 +167,67 @@ pub fn llen(key: Bytes) -> usize {
                     Value::Single(_) => 1,
                 }
             }
+        }
+    }
+}
+
+/// Non-blocking left-pop for `key` when it has at least one element (same list rules as [`lpop`]).
+fn try_blpop(lock: &mut HashMap<Bytes, StoredValue>, key: &Bytes) -> Option<(Bytes, Bytes)> {
+    match lock.get_mut(key) {
+        None => None,
+        Some(stored_value) => {
+            if stored_value.expires_at.is_some_and(|d| d < Utc::now()) {
+                lock.remove(key);
+                None
+            } else {
+                match &mut stored_value.value {
+                    Value::List(values) => {
+                        if let Some(value) = values.pop_front() {
+                            if values.is_empty() {
+                                lock.remove(key);
+                            }
+                            Some((key.clone(), value))
+                        } else {
+                            None
+                        }
+                    }
+                    Value::Single(value) => {
+                        let value = Bytes::clone(value);
+                        lock.remove(key);
+                        Some((key.clone(), value))
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// Single-key [`BLPOP`](https://redis.io/docs/latest/commands/blpop/): block until `key` has a
+/// left-popped element. If `timeout_secs > 0`, return [`None`] when that many seconds pass with no
+/// element. If `timeout_secs == 0`, wait indefinitely (no timeout). Never holds [`STORAGE`] across
+/// `.await`.
+pub async fn blpop(key: Bytes, timeout_secs: f64) -> Option<(Bytes, Bytes)> {
+    loop {
+        if let Some(pair) = try_blpop(&mut STORAGE.lock().unwrap(), &key) {
+            return Some(pair);
+        }
+
+        let notify = {
+            let mut wake = LIST_WAKE.lock().unwrap();
+            wake.entry(key.clone())
+                .or_insert_with(|| Arc::new(Notify::new()))
+                .clone()
+        };
+
+        if timeout_secs > 0.0 {
+            let mut sleep = tokio::time::sleep(Duration::from_secs_f64(timeout_secs));
+            tokio::pin!(sleep);
+            tokio::select! {
+                () = sleep.as_mut() => return None,
+                () = notify.notified() => {}
+            }
+        } else {
+            notify.notified().await;
         }
     }
 }

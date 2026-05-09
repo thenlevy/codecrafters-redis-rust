@@ -117,6 +117,14 @@ impl TryFrom<SetParsed> for SetOperation {
     }
 }
 
+fn parse_blpop_timeout_secs(b: Bytes) -> Result<f64, CommandError> {
+    use parse_errors::*;
+    str::from_utf8(b.as_ref())
+        .map_err(|_| CommandError::InvalidArgument(INVALID_UTF8))?
+        .parse::<f64>()
+        .map_err(|_| CommandError::InvalidArgument(INVALID_NUMBER))
+}
+
 fn parse_ttl_ms(b: Bytes, mult: i64) -> Result<i64, CommandError> {
     use parse_errors::*;
     str::from_utf8(b.as_ref())
@@ -172,6 +180,15 @@ pub struct LPopParsed {
     pub count: Option<usize>,
 }
 
+#[derive(CommandSpec)]
+#[command_spec(name = "BLPOP", exact_tail_tokens = 2)]
+pub struct BlpopParsed {
+    #[positional(cardinality = exactly_one)]
+    pub key: Bytes,
+    #[positional(cardinality = exactly_one)]
+    pub timeout: Bytes,
+}
+
 pub enum Command {
     Ping,
     Echo(Bytes),
@@ -181,6 +198,8 @@ pub enum Command {
     Lrange(RangeOperation),
     Llen(Bytes),
     Lpop(Bytes, usize),
+    /// Second field is timeout in seconds; `0` means wait forever (no timeout).
+    Blpop(Bytes, f64),
     NoOp,
 }
 
@@ -231,6 +250,10 @@ pub fn parse(words: &[Bytes]) -> Result<Command, CommandError> {
         "LPOP" => {
             let p = LPopParsed::try_from_tail(tail)?;
             Ok(Command::Lpop(p.key, p.count.unwrap_or(1)))
+        }
+        "BLPOP" => {
+            let p = BlpopParsed::try_from_tail(tail)?;
+            Ok(Command::Blpop(p.key, parse_blpop_timeout_secs(p.timeout)?))
         }
         _ => Err(CommandError::InvalidCommand(
             parse_errors::UNKNOWN_COMMAND_WORD,
