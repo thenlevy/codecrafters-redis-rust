@@ -97,9 +97,9 @@ async fn handle_connection(stream: TcpStream, _address: SocketAddr) -> Result<()
                             None => Some(RedisValue::NullArray),
                         }
                     }
-                    Command::Type(key) => storage::r#type(key)
-                        .map(|s| RedisValue::SimpleString(Bytes::from(s)))
-                        .or(Some(RedisValue::Null)),
+                    Command::Type(key) => Some(RedisValue::SimpleString(Bytes::from(
+                        storage::r#type(key).unwrap_or("none"),
+                    ))),
                     Command::NoOp => None,
                 },
             },
