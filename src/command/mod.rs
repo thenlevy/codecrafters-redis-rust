@@ -189,6 +189,13 @@ pub struct BlpopParsed {
     pub timeout: Bytes,
 }
 
+#[derive(CommandSpec)]
+#[command_spec(name = "TYPE", exact_tail_tokens = 1)]
+pub struct TypeParsed {
+    #[positional(cardinality = exactly_one)]
+    pub key: Bytes,
+}
+
 pub enum Command {
     Ping,
     Echo(Bytes),
@@ -200,6 +207,7 @@ pub enum Command {
     Lpop(Bytes, usize),
     /// Second field is timeout in seconds; `0` means wait forever (no timeout).
     Blpop(Bytes, f64),
+    Type(Bytes),
     NoOp,
 }
 
@@ -254,6 +262,10 @@ pub fn parse(words: &[Bytes]) -> Result<Command, CommandError> {
         "BLPOP" => {
             let p = BlpopParsed::try_from_tail(tail)?;
             Ok(Command::Blpop(p.key, parse_blpop_timeout_secs(p.timeout)?))
+        }
+        "TYPE" => {
+            let p = TypeParsed::try_from_tail(tail)?;
+            Ok(Command::Type(p.key))
         }
         _ => Err(CommandError::InvalidCommand(
             parse_errors::UNKNOWN_COMMAND_WORD,

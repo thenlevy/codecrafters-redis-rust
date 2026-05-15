@@ -85,6 +85,14 @@ pub fn get(key: Bytes) -> Option<Bytes> {
     }
 }
 
+pub fn r#type(key: Bytes) -> Option<&'static str> {
+    STORAGE
+        .lock()
+        .unwrap()
+        .get(&key)
+        .map(|s| s.value.type_str())
+}
+
 /// Inclusive `(start, stop)` slice bounds for a list of length `len`, matching Redis
 /// [`LRANGE`](https://redis.io/docs/latest/commands/lrange/) index rules:
 /// zero-based inclusive range, negative indices count from the end (`-1` is last),
@@ -308,4 +316,13 @@ struct StoredValue {
 enum Value {
     Single(Bytes),
     List(VecDeque<Bytes>),
+}
+
+impl Value {
+    fn type_str(&self) -> &'static str {
+        match self {
+            Self::List(_) => "list",
+            Self::Single(_) => "string",
+        }
+    }
 }

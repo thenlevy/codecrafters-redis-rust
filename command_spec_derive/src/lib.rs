@@ -85,9 +85,7 @@ fn parse_positional(attr: &Attribute) -> syn::Result<PositionalCfg> {
                 "one_or_many" => Cardinality::OneOrMany,
                 "zero_or_one" => Cardinality::ZeroOrOne,
                 _ => {
-                    return Err(meta.error(
-                        "expected exactly_one | one_or_many | zero_or_one",
-                    ));
+                    return Err(meta.error("expected exactly_one | one_or_many | zero_or_one"));
                 }
             };
             Ok(())
